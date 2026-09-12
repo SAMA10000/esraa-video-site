@@ -1,0 +1,38 @@
+name: runner-diag
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/runner_diag.yml'
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Server diagnostics
+        shell: bash
+        run: |
+          set -u
+          echo "=== RUNNER ==="
+          hostname || true
+          whoami || true
+          pwd || true
+          echo "=== DRAMA BOT ==="
+          if [ -d /root/drama_bot ]; then
+            echo "DRAMA_BOT_PRESENT=YES"
+            ls -ld /root/drama_bot || true
+            echo "FACEBOOK_SERVICE=$(systemctl is-active drama-facebook-drain.service 2>/dev/null || true)"
+            echo "READY_POINTER=$(head -1 /root/drama_bot/ready_videos/LATEST_EDITED_VIDEO.txt 2>/dev/null || true)"
+            echo "READY_EXISTS=$(test -f /root/drama_bot/ready_videos/edited_beige_brand_reel_890512617471690_20260908_112105.mp4 && echo YES || echo NO)"
+            echo "READY_SHA=$(sha256sum /root/drama_bot/ready_videos/edited_beige_brand_reel_890512617471690_20260908_112105.mp4 2>/dev/null | awk '{print $1}')"
+            echo "=== LAST V6 ==="
+            L=$(ls -1t /root/drama_bot/logs/FACEBOOK_V6_ONE_SHOT_* 2>/dev/null | head -1 || true)
+            [ -n "$L" ] && tail -60 "$L" || true
+            echo "=== PUBLISHER FILES ==="
+            ls -l /root/drama_bot/across_select_upload_publish_share_EDITED_ONLY.py /root/drama_bot/across_select_upload_publish_share_EDITED_ONLY_MANUAL_IMPL.py /root/drama_bot/profile_session_guard.py 2>/dev/null || true
+          else
+            echo "DRAMA_BOT_PRESENT=NO"
+          fi
