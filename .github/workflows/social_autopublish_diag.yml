@@ -1,0 +1,48 @@
+name: social-autopublish-diag
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/social_autopublish_diag.yml'
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: self-hosted
+    timeout-minutes: 8
+    steps:
+      - name: Safe social autopublish diagnostics
+        shell: bash
+        run: |
+          set +e
+          echo "=== HOST ==="
+          hostname
+          whoami
+          echo "HOME=$HOME"
+          echo "=== RUNTIME ==="
+          command -v node && node --version
+          command -v npm && npm --version
+          command -v python3 && python3 --version
+          echo "=== BROWSER ==="
+          for b in google-chrome google-chrome-stable chromium chromium-browser; do
+            if command -v "$b" >/dev/null 2>&1; then echo "$b=$($b --version 2>/dev/null | head -1)"; fi
+          done
+          echo "=== PLAYWRIGHT ==="
+          node -e "try{console.log('playwright='+require('playwright/package.json').version)}catch(e){console.log('playwright=NO')}" 2>/dev/null || true
+          node -e "try{console.log('playwright-core='+require('playwright-core/package.json').version)}catch(e){console.log('playwright-core=NO')}" 2>/dev/null || true
+          echo "=== N8N ==="
+          command -v n8n >/dev/null 2>&1 && n8n --version || echo "n8n_cli=NO"
+          systemctl is-active n8n 2>/dev/null | sed 's/^/n8n_systemd=/' || true
+          docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null | grep -Ei '(^| )n8n($|:|/)' | sed 's/^/n8n_docker=/' || true
+          echo "=== CANDIDATE WORKSPACES ==="
+          for d in /root/news_video_bot /root/drama_bot /root/esraa-video-site /opt /srv; do
+            [ -e "$d" ] && ls -ld "$d"
+          done
+          echo "=== BROWSER PROFILE CANDIDATES (NAMES ONLY) ==="
+          find /root /home -maxdepth 4 -type d \( -name 'Default' -o -name 'Profile 1' -o -name 'chrome-profile' -o -name 'user-data-dir' \) 2>/dev/null | head -40
+          echo "=== EXISTING SOCIAL/PUBLISHER FILE NAMES ==="
+          find /root -maxdepth 4 -type f \( -iname '*linkedin*' -o -iname '*twitter*' -o -iname '*tiktok*' -o -iname '*publish*' -o -iname '*playwright*' \) 2>/dev/null | grep -vE '/(node_modules|\.cache)/' | head -120
+          echo "=== SERVICES WITH BROWSER/PUBLISH/N8N ==="
+          systemctl list-unit-files --type=service 2>/dev/null | grep -Ei 'n8n|browser|chrome|playwright|publish|social' | head -80 || true
+          echo "=== DONE ==="
