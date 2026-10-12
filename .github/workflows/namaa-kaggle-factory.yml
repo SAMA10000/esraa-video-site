@@ -6,8 +6,8 @@ on:
         description: Run with the free Kaggle GPU quota if available
         required: true
         type: choice
-        options: [NO, RUN]
-        default: NO
+        options: ['NO', 'RUN']
+        default: 'NO'
 permissions:
   contents: read
 concurrency:
