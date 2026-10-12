@@ -1,0 +1,62 @@
+name: PHILOSOPHY CAT - Render after NAMAA
+on:
+  workflow_run:
+    workflows: ["NAMAA Kaggle Female Voice Factory"]
+    types: [completed]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: philosophy-cat-video-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+jobs:
+  video-review:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout verified video renderer
+        uses: actions/checkout@v4
+      - name: Use Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install FFmpeg and Arabic fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg fonts-noto-core
+          python -m pip install -r video_pipeline/requirements.txt
+      - name: Download matching NAMAA voice QA artifact from source run
+        uses: actions/download-artifact@v4
+        with:
+          name: namaa-female-review-${{ github.event.workflow_run.run_number }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: audio_inputs
+      - name: Render dynamic vertical history story (review only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          AUDIO="$(find audio_inputs -type f -name 'namaa_female_v12_corrected.mp3' -print -quit)"
+          REPORT="$(find audio_inputs -type f -name 'female_v12_report.json' -print -quit)"
+          test -n "$AUDIO" && test -n "$REPORT"
+          python namaa_kaggle/verify_outputs.py audio_inputs
+          mkdir -p video_output
+          python video_pipeline/render_philosophy_video.py --audio "$AUDIO" --manifest "$REPORT" --output video_output/PHILOSOPHY_CAT_MANSA_MUSA.mp4 --fps 24 --preview
+          python video_pipeline/render_philosophy_video.py --audio "$AUDIO" --manifest "$REPORT" --output video_output/PHILOSOPHY_CAT_MANSA_MUSA.mp4 --fps 24
+      - name: Save video and QA assets for review only
+        uses: actions/upload-artifact@v4
+        with:
+          name: philosophy-cat-mansa-musa-review-${{ github.event.workflow_run.run_number }}
+          path: |
+            video_output/PHILOSOPHY_CAT_MANSA_MUSA.mp4
+            video_output/VIDEO_QA_REPORT.json
+            video_output/preview_*.png
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Video is not automatically published
+        if: success()
+        run: |
+          echo '### Video generated for review only' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Open this run Artifacts to download MP4. Listen and check visuals before publishing. No social media publish action.' >> "$GITHUB_STEP_SUMMARY"
