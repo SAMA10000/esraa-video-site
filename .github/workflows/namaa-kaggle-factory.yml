@@ -1,0 +1,73 @@
+name: NAMAA Kaggle Female Voice Factory
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Run with the free Kaggle GPU quota if available
+        required: true
+        type: choice
+        options: [NO, RUN]
+        default: NO
+permissions:
+  contents: read
+concurrency:
+  group: namaa-kaggle-female
+  cancel-in-progress: false
+jobs:
+  female-narration:
+    if: ${{ inputs.confirm == 'RUN' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      KERNEL_REF: fashionforyou/namaa-female-calm-factory
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Authentication safety check, never print tokens
+        run: |
+          python -c "import os,sys; a=os.environ; valid=bool(a.get('KAGGLE_API_TOKEN') or (a.get('KAGGLE_USERNAME') and a.get('KAGGLE_KEY'))); print('Kaggle auth configured' if valid else 'MISSING GitHub secret KAGGLE_API_TOKEN'); sys.exit(0 if valid else 2)"
+      - name: Build a Kaggle notebook from V6 and V12
+        run: python namaa_kaggle/build_notebook.py
+      - name: Install official Kaggle CLI
+        run: python -m pip install 'kaggle>=1.8,<2'
+      - name: Submit private Kaggle run with T4
+        run: kaggle kernels push -p namaa_kaggle --accelerator NvidiaTeslaT4 --timeout 3600
+      - name: Poll Kaggle execution state, not fixed sleeping to declare success
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 5100))
+          while true; do
+            state="$(kaggle kernels status "$KERNEL_REF" 2>&1)" || { echo "$state"; exit 3; }
+            echo "$state"
+            lower="$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')"
+            if [[ "$lower" == *complete* || "$lower" == *success* ]]; then break; fi
+            if [[ "$lower" == *error* || "$lower" == *fail* || "$lower" == *cancel* ]]; then
+              kaggle kernels logs "$KERNEL_REF" || true
+              exit 4
+            fi
+            if (( SECONDS >= deadline )); then echo 'Safety timeout' >&2; exit 5; fi
+            sleep 35
+          done
+      - name: Download MP3 and QC manifest only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p namaa-results
+          kaggle kernels output "$KERNEL_REF" -p namaa-results -o --file-pattern '.*(namaa_female_v12_corrected\.mp3|female_v12_report\.json)$'
+          python namaa_kaggle/verify_outputs.py namaa-results
+      - name: Save review-only audio as Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: namaa-female-review-${{ github.run_number }}
+          path: |
+            namaa-results/**/namaa_female_v12_corrected.mp3
+            namaa-results/**/female_v12_report.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
