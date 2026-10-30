@@ -1,0 +1,47 @@
+name: Hostinger Telegram service - safe read-only probe 20261030
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/hostinger-telegram-readonly-probe-20261030.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hostinger-telegram-readonly-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    if: github.repository == 'SAMA10000/esraa-video-site'
+    runs-on: self-hosted
+    timeout-minutes: 3
+    steps:
+      - name: Inspect Telegram service state (no secrets, no changes)
+        shell: bash
+        run: |
+          set -u
+          printf 'PROBE_VERSION=20261030_V1\n'
+          printf 'RUNNER_HOST=%s\n' "$(hostname 2>/dev/null || echo unknown)"
+          printf 'RUNNER_USER=%s\n' "$(id -un 2>/dev/null || echo unknown)"
+          if test -d /root/drama_bot; then
+            echo 'DRAMA_BOT_DIR=present'
+          else
+            echo 'DRAMA_BOT_DIR=absent'
+          fi
+          for svc in facebook-cycle-telegram-alert.service drama-facebook-drain.service; do
+            case "$svc" in
+              facebook-cycle-telegram-alert.service) label=TELEGRAM_SERVICE ;;
+              *) label=DRAMA_SERVICE ;;
+            esac
+            if command -v systemctl >/dev/null 2>&1; then
+              state="$(systemctl is-active "$svc" 2>/dev/null || true)"
+              printf '%s=%s\n' "$label" "${state:-unknown}"
+            else
+              printf '%s=systemctl_unavailable\n' "$label"
+            fi
+          done
+          echo 'PROBE_FINISHED=YES'
