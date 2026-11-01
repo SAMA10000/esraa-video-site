@@ -1,0 +1,72 @@
+name: SANAA disable YouTube 2GiB preflight - guarded one-time
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/sanaa-disable-youtube-2g-preflight-20261101.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sanaa-disable-youtube-2g-preflight
+  cancel-in-progress: false
+jobs:
+  disable-preflight:
+    if: github.repository == 'SAMA10000/esraa-video-site'
+    runs-on: self-hosted
+    timeout-minutes: 4
+    steps:
+      - name: Guarded persistent removal of ONLY Sanaa YouTube 2GiB ExecCondition
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LANG=C
+          echo 'SANAA_CHANGE=DISABLE_ONLY_YOUTUBE_DISK_PREFLIGHT'
+          printf 'HOST='; hostname
+          printf 'UTC='; date -u '+%Y-%m-%dT%H:%M:%SZ'
+          if [[ "$(hostname)" != "srv1526000" ]]; then echo 'RESULT=SAFE_STOP_WRONG_HOST'; exit 42; fi
+          if [[ "$(id -u)" != "0" ]]; then echo 'RESULT=SAFE_STOP_NOT_ROOT'; exit 43; fi
+          unit='sanaa-youtube-hourly.service'
+          guard='sanaa-youtube-disk-preflight.sh'
+          dropin_dir='/etc/systemd/system/sanaa-youtube-hourly.service.d'
+          dropin="$dropin_dir/90-disable-only-2g-disk-preflight.conf"
+          backup_dir='/root/sanaa-preflight-backups'
+          echo '=== DISK BEFORE ==='
+          df -h /
+          if ! systemctl cat "$unit" >/dev/null 2>&1; then echo 'RESULT=SAFE_STOP_UNIT_NOT_FOUND'; exit 44; fi
+          effective="$(systemctl show --value -p ExecCondition "$unit")"
+          if [[ -z "$(printf '%s' "$effective" | tr -d '[:space:]')" ]]; then
+            echo 'RESULT=ALREADY_DISABLED_EFFECTIVE_EXEC_CONDITION_EMPTY'; exit 0
+          fi
+          if [[ "$effective" != *"$guard"* ]]; then echo 'RESULT=SAFE_STOP_UNEXPECTED_EFFECTIVE_EXEC_CONDITION'; exit 45; fi
+          nonempty="$(systemctl cat "$unit" | grep -E '^[[:space:]]*ExecCondition[[:space:]]*=' | grep -Ev '^[[:space:]]*ExecCondition[[:space:]]*=[[:space:]]*$' || true)"
+          count="$(printf '%s\n' "$nonempty" | grep -c . || true)"
+          if [[ "$count" != '1' || "$nonempty" != *"$guard"* ]]; then echo "RESULT=SAFE_STOP_OTHER_EXEC_CONDITION_PRESENT count=$count"; exit 46; fi
+          if [[ -e "$dropin" ]]; then echo 'RESULT=SAFE_STOP_EXISTING_OVERRIDE'; exit 47; fi
+          umask 077
+          install -d -m 0700 "$backup_dir"
+          backup="$backup_dir/sanaa-youtube-before-2g-removal-$(date -u +%Y%m%dT%H%M%SZ).txt"
+          systemctl cat "$unit" > "$backup"
+          chmod 0600 "$backup"
+          install -d -m 0755 "$dropin_dir"
+          temp="$(mktemp "$dropin_dir/.90-disable-only-2g.XXXXXXXX")"
+          printf '[Service]\nExecCondition=\n' > "$temp"
+          chmod 0644 "$temp"
+          mv -n -- "$temp" "$dropin"
+          if [[ -e "$temp" ]]; then rm -f -- "$temp"; echo 'RESULT=SAFE_STOP_DROPIN_COLLISION'; exit 48; fi
+          if ! systemctl daemon-reload; then
+            rm -f -- "$dropin"; systemctl daemon-reload || true
+            echo 'RESULT=ROLLED_BACK_DAEMON_RELOAD_FAILED'; exit 49
+          fi
+          after="$(systemctl show --value -p ExecCondition "$unit")"
+          if [[ -n "$(printf '%s' "$after" | tr -d '[:space:]')" ]]; then
+            rm -f -- "$dropin"; systemctl daemon-reload || true
+            echo 'RESULT=ROLLED_BACK_CONDITION_STILL_ACTIVE'; exit 50
+          fi
+          echo 'EFFECTIVE_EXEC_CONDITION=EMPTY'
+          echo "PERSISTENT_OVERRIDE=$dropin"
+          echo "BACKUP=$backup"
+          printf 'YOUTUBE_TIMER_ACTIVE='; systemctl is-active sanaa-youtube-hourly.timer || true
+          printf 'YOUTUBE_TIMER_ENABLED='; systemctl is-enabled sanaa-youtube-hourly.timer || true
+          echo 'RESULT=PASS_2G_PREFLIGHT_DISABLED_IN_EFFECTIVE_UNIT'
+          echo 'NOTE=NO_PUBLISH_JOB_TRIGGERED_OR_MEDIA_DELETED'
