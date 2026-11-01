@@ -58,7 +58,7 @@ jobs:
           echo '=== BLOCKED PUBLISHING MARKERS (LAST 12H, MAX 20) ==='
           journalctl --since '12 hours ago' -u sanaa-youtube-hourly.service -u sanaa-social-publisher.service --no-pager -o cat 2>/dev/null | grep -E 'SANAA_DISK_PREFLIGHT=|SOCIAL_QUEUE_WAITING_FOR_RAW=|BLOCKED_REMOTE_HASH_CONFLICT' | tail -n 20
           echo '=== DONE READ ONLY ==='
-hosted-fallback:
+  hosted-fallback:
     if: github.repository == 'SAMA10000/esraa-video-site'
     runs-on: ubuntu-latest
     timeout-minutes: 5
