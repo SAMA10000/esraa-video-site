@@ -58,3 +58,75 @@ jobs:
           echo '=== BLOCKED PUBLISHING MARKERS (LAST 12H, MAX 20) ==='
           journalctl --since '12 hours ago' -u sanaa-youtube-hourly.service -u sanaa-social-publisher.service --no-pager -o cat 2>/dev/null | grep -E 'SANAA_DISK_PREFLIGHT=|SOCIAL_QUEUE_WAITING_FOR_RAW=|BLOCKED_REMOTE_HASH_CONFLICT' | tail -n 20
           echo '=== DONE READ ONLY ==='
+hosted-fallback:
+    if: github.repository == 'SAMA10000/esraa-video-site'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SANAA_VPS_SSH_KEY: ${{ secrets.SANAA_VPS_SSH_KEY }}
+      HOSTINGER_SSH_KEY: ${{ secrets.HOSTINGER_SSH_KEY }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SANAA_VPS_KNOWN_HOSTS: ${{ secrets.SANAA_VPS_KNOWN_HOSTS }}
+      HOSTINGER_KNOWN_HOSTS: ${{ secrets.HOSTINGER_KNOWN_HOSTS }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+    steps:
+      - name: Read-only VPS fallback if verified SSH route exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'FALLBACK=GITHUB_HOSTED'
+          if timeout 5 bash -c 'echo >/dev/tcp/187.124.175.137/22' 2>/dev/null; then
+            echo 'VPS_TCP22=REACHABLE'
+          else
+            echo 'VPS_TCP22=UNREACHABLE'
+            exit 0
+          fi
+          key=""
+          for candidate in "$SANAA_VPS_SSH_KEY" "$HOSTINGER_SSH_KEY" "$VPS_SSH_KEY" "$VPS_SSH_PRIVATE_KEY" "$SSH_PRIVATE_KEY"; do
+            if test -n "$candidate"; then key="$candidate"; break; fi
+          done
+          pinned=""
+          for candidate in "$SANAA_VPS_KNOWN_HOSTS" "$HOSTINGER_KNOWN_HOSTS" "$VPS_KNOWN_HOSTS"; do
+            if test -n "$candidate"; then pinned="$candidate"; break; fi
+          done
+          if test -z "$key"; then
+            echo 'VPS_SSH_KEY=NOT_CONFIGURED'
+            echo 'REMOTE_DIAGNOSTIC=NOT_EXECUTED'
+            exit 0
+          fi
+          if test -z "$pinned"; then
+            echo 'VPS_SSH_PINNED_HOST_KEY=NOT_CONFIGURED'
+            echo 'REMOTE_DIAGNOSTIC=NOT_EXECUTED'
+            exit 0
+          fi
+          umask 077
+          tmpdir=$(mktemp -d)
+          trap 'rm -rf "$tmpdir"' EXIT
+          printf '%s\n' "$key" > "$tmpdir/key"
+          printf '%s\n' "$pinned" > "$tmpdir/known_hosts"
+          unset key pinned SANAA_VPS_SSH_KEY HOSTINGER_SSH_KEY VPS_SSH_KEY VPS_SSH_PRIVATE_KEY SSH_PRIVATE_KEY SANAA_VPS_KNOWN_HOSTS HOSTINGER_KNOWN_HOSTS VPS_KNOWN_HOSTS
+          if ! ssh-keygen -F 187.124.175.137 -f "$tmpdir/known_hosts" >/dev/null 2>&1; then
+            echo 'VPS_PIN_MISMATCH=SAFE_STOP'
+            exit 0
+          fi
+          echo 'VPS_READONLY_SSH=START'
+          timeout 100 ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$tmpdir/known_hosts" -o ConnectTimeout=10 -i "$tmpdir/key" root@187.124.175.137 bash -s <<'REMOTE'
+          set +e
+          printf 'HOST='; hostname
+          date -u '+UTC=%Y-%m-%dT%H:%M:%SZ'
+          echo 'DISK'; df -h /; df -i /
+          for d in /root/drama_bot /root/drama_bot/output /var/log /tmp; do
+            if test -d "$d"; then timeout 20 du -xsh "$d" 2>/dev/null; fi
+          done
+          if test -d /root/drama_bot; then
+            timeout 25 find /root/drama_bot -xdev -type f -name '*05pws6-Jx7s*' -printf '%f %s bytes\n' 2>/dev/null | head -n 15
+          fi
+          for u in sanaa-youtube-hourly.service sanaa-social-publisher.service sanaa-source-continuous.service; do
+            printf '%s ' "$u"
+            systemctl show "$u" -p ActiveState -p SubState -p Result 2>/dev/null | tr '\n' ' '
+            echo
+          done
+          echo 'VPS_READONLY_DIAGNOSTIC_DONE'
+          REMOTE
