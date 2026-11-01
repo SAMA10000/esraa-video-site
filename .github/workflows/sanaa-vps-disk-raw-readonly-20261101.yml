@@ -1,0 +1,60 @@
+name: SANAA VPS disk and raw source read-only 20261101
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/sanaa-vps-disk-raw-readonly-20261101.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sanaa-vps-disk-raw-readonly-20261101
+  cancel-in-progress: false
+jobs:
+  inspect:
+    if: github.repository == 'SAMA10000/esraa-video-site'
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Inspect Hostinger VPS storage and blocked source, read only
+        shell: bash
+        run: |
+          set +e
+          export LANG=C
+          echo 'DIAG_VERSION=20261101_V1_READ_ONLY'
+          printf 'RUNNER_HOST='; hostname
+          printf 'RUNNER_USER='; id -un
+          date -u '+UTC=%Y-%m-%dT%H:%M:%SZ'
+          echo '=== DISK ==='
+          df -h /
+          df -i /
+          echo '=== DIRECTORY SIZES (bounded, no deletion) ==='
+          for d in /root /root/drama_bot /root/drama_bot/output /var /var/lib /var/log /tmp /opt; do
+            if test -d "$d"; then
+              printf '%s: ' "$d"
+              timeout 25s du -xsh "$d" 2>/dev/null || echo 'not-readable-or-timeout'
+            fi
+          done
+          echo '=== LARGEST DRAMA OUTPUT SUBDIRECTORIES ==='
+          if test -d /root/drama_bot/output; then
+            timeout 40s du -xhd1 /root/drama_bot/output 2>/dev/null | sort -h | tail -n 15
+          fi
+          echo '=== LARGE VIDEO FILE COUNTS / TOP SIZES (NO PATHS) ==='
+          if test -d /root/drama_bot; then
+            timeout 40s find /root/drama_bot -xdev -type f -size +100M -printf '%s\n' 2>/dev/null | sort -nr | head -n 20
+          fi
+          echo '=== RAW SOURCE 05pws6-Jx7s (NAME, BYTES ONLY) ==='
+          if test -d /root/drama_bot; then
+            timeout 40s find /root/drama_bot -xdev -type f -name '*05pws6-Jx7s*' -printf '%f | %s bytes\n' 2>/dev/null | head -n 20
+          else
+            echo 'DRAMA_BOT_DIR=ABSENT'
+          fi
+          echo '=== SYSTEMD UNITS ==='
+          for u in sanaa-youtube-hourly.service sanaa-social-publisher.service sanaa-source-continuous.service sanaa-canonical-import.service drama-hf-canonical-distribution.service; do
+            printf '%s | ' "$u"
+            systemctl show "$u" --no-pager -p ActiveState -p SubState -p Result -p ExecMainStatus 2>/dev/null | tr '\n' ' '
+            printf '\n'
+          done
+          echo '=== BLOCKED PUBLISHING MARKERS (LAST 12H, MAX 20) ==='
+          journalctl --since '12 hours ago' -u sanaa-youtube-hourly.service -u sanaa-social-publisher.service --no-pager -o cat 2>/dev/null | grep -E 'SANAA_DISK_PREFLIGHT=|SOCIAL_QUEUE_WAITING_FOR_RAW=|BLOCKED_REMOTE_HASH_CONFLICT' | tail -n 20
+          echo '=== DONE READ ONLY ==='
